@@ -1,0 +1,16 @@
+# Включить RewriteEngine
+RewriteEngine on
+
+# Если запрос не к существующему файлу или директории
+# то направляем его на index.php
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule . index.php
+
+# Отключаем листинг директорий
+Options -Indexes
+
+# Защита от доступа к служебным файлам
+<FilesMatch "\.(htaccess|htpasswd|ini|log|sh|inc|bak|sql)$">
+    Require all denied
+</FilesMatch>

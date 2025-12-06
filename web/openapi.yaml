@@ -1,0 +1,618 @@
+openapi: 3.0.3
+info:
+  title: Vacancy Management API
+  description: |
+    REST API для управления вакансиями.
+
+    ## Возможности
+    - Получение списка вакансий с пагинацией и сортировкой
+    - **Полнотекстовый поиск** с использованием FULLTEXT индексов
+    - Просмотр детальной информации о вакансии
+    - Создание новых вакансий
+    - Обновление существующих вакансий
+    - Удаление вакансий
+
+    ## Полнотекстовый поиск
+    API поддерживает эффективный полнотекстовый поиск:
+    - PostgreSQL: использует tsvector с ранжированием по релевантности
+    - MySQL: использует FULLTEXT индексы
+    - Поиск по полям: название и описание вакансии
+    - Результаты кешируются на 5 минут
+
+    ## Кеширование
+    API использует кеширование для улучшения производительности:
+    - Список вакансий кешируется на 5 минут
+    - Отдельные вакансии кешируются на 10 минут
+    - Результаты поиска кешируются на 5 минут
+
+    ## Rate Limiting
+    Ограничение количества запросов: 100 запросов в час на IP адрес.
+    При превышении лимита возвращается статус 429.
+
+  version: 1.0.0
+  contact:
+    name: API Support
+    email: support@example.com
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Development server
+  - url: https://api.example.com
+    description: Production server
+
+tags:
+  - name: vacancy
+    description: Операции с вакансиями
+
+paths:
+  /vacancy:
+    get:
+      tags:
+        - vacancy
+      summary: Получить список вакансий
+      description: |
+        Возвращает постраничный список всех вакансий с возможностью сортировки.
+        Результаты кешируются на 5 минут.
+      operationId: getVacancies
+      parameters:
+        - name: page
+          in: query
+          description: Номер страницы (начиная с 1)
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 10000
+            default: 1
+          example: 1
+        - name: sort
+          in: query
+          description: Поле для сортировки
+          required: false
+          schema:
+            type: string
+            enum: [salary, created_at]
+            default: created_at
+          example: salary
+        - name: order
+          in: query
+          description: Направление сортировки
+          required: false
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+          example: desc
+      responses:
+        '200':
+          description: Успешный ответ со списком вакансий
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/VacancyShort'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+              examples:
+                success:
+                  value:
+                    data:
+                      - id: 1
+                        title: "PHP Developer"
+                        salary: 150000
+                        description: "Требуется опытный PHP разработчик"
+                      - id: 2
+                        title: "Frontend Developer"
+                        salary: 120000
+                        description: "Разработка пользовательских интерфейсов"
+                    pagination:
+                      total: 25
+                      page: 1
+                      pageSize: 10
+                      pageCount: 3
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    post:
+      tags:
+        - vacancy
+      summary: Создать новую вакансию
+      description: Создает новую вакансию в системе
+      operationId: createVacancy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VacancyCreate'
+            examples:
+              basic:
+                summary: Базовая вакансия
+                value:
+                  title: "PHP Developer"
+                  description: "Требуется опытный PHP разработчик"
+                  salary: 150000
+              with_additional:
+                summary: С дополнительными полями
+                value:
+                  title: "Senior PHP Developer"
+                  description: "Требуется опытный PHP разработчик"
+                  salary: 200000
+                  additional_fields:
+                    company: "Tech Corp"
+                    location: "Москва"
+                    remote: true
+                    experience_years: 5
+      responses:
+        '201':
+          description: Вакансия успешно создана
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  id:
+                    type: integer
+                    example: 13
+                  message:
+                    type: string
+                    example: "Вакансия успешно создана"
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /vacancy/search:
+    get:
+      tags:
+        - vacancy
+      summary: Поиск вакансий по ключевым словам
+      description: |
+        Выполняет полнотекстовый поиск вакансий по названию и описанию.
+        Использует FULLTEXT индекс для эффективного поиска.
+        Результаты ранжируются по релевантности и кешируются на 5 минут.
+
+        **Поддерживаемые СУБД:**
+        - PostgreSQL: tsvector с русской морфологией и ранжированием
+        - MySQL: FULLTEXT индекс с NATURAL LANGUAGE MODE
+        - Другие: LIKE поиск (fallback)
+      operationId: searchVacancies
+      parameters:
+        - name: q
+          in: query
+          description: Поисковый запрос (ключевые слова для поиска)
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 255
+          example: "PHP разработчик"
+        - name: page
+          in: query
+          description: Номер страницы результатов
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 10000
+            default: 1
+          example: 1
+        - name: sort
+          in: query
+          description: Порядок сортировки результатов
+          required: false
+          schema:
+            type: string
+            enum: [relevance, asc, desc]
+            default: relevance
+          example: "relevance"
+      responses:
+        '200':
+          description: Успешный ответ с результатами поиска
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/VacancyShort'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+                  query:
+                    type: string
+                    description: Поисковый запрос, который был выполнен
+              examples:
+                found:
+                  summary: Найдены результаты
+                  value:
+                    data:
+                      - id: 1
+                        title: "Senior PHP Developer"
+                        salary: 200000
+                        description: "Требуется опытный PHP разработчик с опытом..."
+                      - id: 5
+                        title: "PHP Backend Developer"
+                        salary: 150000
+                        description: "Ищем PHP разработчика для работы над проектами"
+                    pagination:
+                      total: 12
+                      page: 1
+                      pageSize: 10
+                      pageCount: 2
+                    query: "PHP разработчик"
+                not_found:
+                  summary: Результаты не найдены
+                  value:
+                    data: []
+                    pagination:
+                      total: 0
+                      page: 1
+                      pageSize: 10
+                      pageCount: 0
+                    query: "несуществующий запрос"
+        '400':
+          description: Ошибка валидации запроса
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                success: false
+                message: "Поисковый запрос не может быть пустым"
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /vacancy/{id}:
+    get:
+      tags:
+        - vacancy
+      summary: Получить вакансию по ID
+      description: |
+        Возвращает детальную информацию о конкретной вакансии.
+        Поддерживает выборочное отображение полей через параметр fields.
+      operationId: getVacancyById
+      parameters:
+        - name: id
+          in: path
+          description: ID вакансии
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+          example: 1
+        - name: fields
+          in: query
+          description: Список полей для отображения (через запятую)
+          required: false
+          schema:
+            type: string
+          example: "title,salary"
+      responses:
+        '200':
+          description: Успешный ответ с данными вакансии
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VacancyFull'
+              examples:
+                full:
+                  summary: Все поля
+                  value:
+                    id: 1
+                    title: "PHP Developer"
+                    salary: 150000
+                    description: "Требуется опытный PHP разработчик"
+                    additional_fields:
+                      company: "Tech Corp"
+                      location: "Москва"
+                filtered:
+                  summary: Только определенные поля
+                  value:
+                    id: 1
+                    title: "PHP Developer"
+                    salary: 150000
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+    put:
+      tags:
+        - vacancy
+      summary: Обновить вакансию
+      description: Обновляет существующую вакансию (частичное обновление)
+      operationId: updateVacancy
+      parameters:
+        - name: id
+          in: path
+          description: ID вакансии
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+          example: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VacancyUpdate'
+            examples:
+              partial:
+                summary: Частичное обновление
+                value:
+                  salary: 180000
+              full:
+                summary: Полное обновление
+                value:
+                  title: "Senior PHP Developer"
+                  description: "Обновленное описание"
+                  salary: 200000
+                  additional_fields:
+                    remote: true
+      responses:
+        '200':
+          description: Вакансия успешно обновлена
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Вакансия успешно обновлена"
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+    delete:
+      tags:
+        - vacancy
+      summary: Удалить вакансию
+      description: Удаляет вакансию из системы
+      operationId: deleteVacancy
+      parameters:
+        - name: id
+          in: path
+          description: ID вакансии
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+          example: 1
+      responses:
+        '200':
+          description: Вакансия успешно удалена
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Вакансия успешно удалена"
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+components:
+  schemas:
+    VacancyShort:
+      type: object
+      description: Краткая информация о вакансии (для списка)
+      properties:
+        id:
+          type: integer
+          description: Уникальный идентификатор
+          example: 1
+        title:
+          type: string
+          description: Название вакансии
+          maxLength: 255
+          example: "PHP Developer"
+        salary:
+          type: integer
+          description: Зарплата
+          minimum: 0
+          example: 150000
+        description:
+          type: string
+          description: Описание вакансии
+          example: "Требуется опытный PHP разработчик"
+      required:
+        - id
+        - title
+        - salary
+        - description
+
+    VacancyFull:
+      allOf:
+        - $ref: '#/components/schemas/VacancyShort'
+        - type: object
+          properties:
+            additional_fields:
+              type: object
+              description: Дополнительные поля в формате JSON
+              additionalProperties: true
+              example:
+                company: "Tech Corp"
+                location: "Москва"
+                remote: true
+
+    VacancyCreate:
+      type: object
+      description: Данные для создания новой вакансии
+      properties:
+        title:
+          type: string
+          description: Название вакансии
+          maxLength: 255
+          minLength: 1
+          example: "PHP Developer"
+        description:
+          type: string
+          description: Описание вакансии
+          minLength: 1
+          example: "Требуется опытный PHP разработчик"
+        salary:
+          type: integer
+          description: Зарплата (положительное число)
+          minimum: 1
+          example: 150000
+        additional_fields:
+          type: object
+          description: Дополнительные поля
+          additionalProperties: true
+          example:
+            company: "Tech Corp"
+            location: "Москва"
+      required:
+        - title
+        - description
+        - salary
+
+    VacancyUpdate:
+      type: object
+      description: Данные для обновления вакансии (все поля опциональны)
+      properties:
+        title:
+          type: string
+          maxLength: 255
+          example: "Senior PHP Developer"
+        description:
+          type: string
+          example: "Обновленное описание"
+        salary:
+          type: integer
+          minimum: 1
+          example: 180000
+        additional_fields:
+          type: object
+          additionalProperties: true
+
+    Pagination:
+      type: object
+      description: Информация о пагинации
+      properties:
+        total:
+          type: integer
+          description: Общее количество записей
+          example: 25
+        page:
+          type: integer
+          description: Текущая страница
+          example: 1
+        pageSize:
+          type: integer
+          description: Размер страницы
+          example: 10
+        pageCount:
+          type: integer
+          description: Общее количество страниц
+          example: 3
+
+    Error:
+      type: object
+      description: Объект ошибки
+      properties:
+        success:
+          type: boolean
+          example: false
+        message:
+          type: string
+          example: "Описание ошибки"
+        errors:
+          type: object
+          description: Детали ошибок валидации (опционально)
+          additionalProperties:
+            type: array
+            items:
+              type: string
+
+  responses:
+    NotFound:
+      description: Ресурс не найден
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            success: false
+            message: "Вакансия не найдена"
+
+    ValidationError:
+      description: Ошибка валидации данных
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            success: false
+            message: "Ошибка при создании вакансии"
+            errors:
+              title:
+                - "Название вакансии не может быть пустым."
+              salary:
+                - "Зарплата должна быть целым числом."
+
+    TooManyRequests:
+      description: Превышен лимит запросов (Rate Limit)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            success: false
+            message: "Превышен лимит запросов. Попробуйте позже."
+      headers:
+        X-Rate-Limit-Limit:
+          description: Максимальное количество запросов
+          schema:
+            type: integer
+            example: 100
+        X-Rate-Limit-Remaining:
+          description: Оставшееся количество запросов
+          schema:
+            type: integer
+            example: 0
+        X-Rate-Limit-Reset:
+          description: Время сброса лимита (Unix timestamp)
+          schema:
+            type: integer
+            example: 1672531200
+
+    InternalError:
+      description: Внутренняя ошибка сервера
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            success: false
+            message: "Внутренняя ошибка сервера"

@@ -1,0 +1,65 @@
+version: '3.8'
+
+services:
+  php:
+    image: yiisoftware/yii2-php:8.1-apache
+    container_name: vakansii_php
+    volumes:
+      - ~/.composer-docker/cache:/root/.composer/cache:delegated
+      - ./:/app:delegated
+    ports:
+      - '8000:80'
+    depends_on:
+      - mysql
+    environment:
+      - DB_HOST=mysql
+      - DB_NAME=vakansii_db
+      - DB_USER=yii2
+      - DB_PASSWORD=yii2secret
+    networks:
+      - vakansii_network
+
+  mysql:
+    image: mysql:8.0
+    container_name: vakansii_mysql
+    command: --default-authentication-plugin=mysql_native_password
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootsecret
+      MYSQL_DATABASE: vakansii_db
+      MYSQL_USER: yii2
+      MYSQL_PASSWORD: yii2secret
+    ports:
+      - '3306:3306'
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./docker/mysql/init:/docker-entrypoint-initdb.d
+    networks:
+      - vakansii_network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+
+  phpmyadmin:
+    image: phpmyadmin:latest
+    container_name: vakansii_phpmyadmin
+    restart: unless-stopped
+    ports:
+      - '8080:80'
+    environment:
+      PMA_HOST: mysql
+      PMA_PORT: 3306
+      PMA_USER: root
+      PMA_PASSWORD: rootsecret
+    depends_on:
+      - mysql
+    networks:
+      - vakansii_network
+
+networks:
+  vakansii_network:
+    driver: bridge
+
+volumes:
+  mysql_data:
