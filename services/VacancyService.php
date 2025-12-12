@@ -112,7 +112,7 @@ class VacancyService
 
         $result = $cache->get($cacheKey);
         if ($result !== false) {
-            Yii::info("Cache HIT for vacancy list: {$cacheKey}", __METHOD__);
+            Yii::debug("Cache HIT for vacancy list: {$cacheKey}", __METHOD__);
             return $result;
         }
 
