@@ -139,13 +139,8 @@ code-quality:phpcs:
   dependencies:
     - build:composer
   script:
-    - |
-      if [ -f "phpcs.xml" ]; then
-        vendor/bin/phpcs
-      else
-        echo "phpcs.xml not found, skipping"
-      fi
-  allow_failure: true
+    - vendor/bin/phpcs
+  allow_failure: false
 
 code-quality:phpstan:
   extends: .php-base
@@ -153,13 +148,8 @@ code-quality:phpstan:
   dependencies:
     - build:composer
   script:
-    - |
-      if [ -f "phpstan.neon" ]; then
-        vendor/bin/phpstan analyse
-      else
-        echo "phpstan.neon not found, skipping"
-      fi
-  allow_failure: true
+    - vendor/bin/phpstan analyse --memory-limit=1G
+  allow_failure: false
 
 # ==================== SECURITY ====================
 

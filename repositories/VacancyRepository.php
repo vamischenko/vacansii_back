@@ -4,6 +4,7 @@ namespace app\repositories;
 
 use app\models\Vacancy;
 use yii\data\ActiveDataProvider;
+use yii\db\Expression;
 
 /**
  * Репозиторий для управления сущностями вакансий
@@ -69,21 +70,17 @@ class VacancyRepository implements VacancyRepositoryInterface
      */
     public function findAll(int $page, string $sortBy, string $sortOrder): ActiveDataProvider
     {
-        $query = Vacancy::find();
+        $query = Vacancy::find()->orderBy([
+            $sortBy => $sortOrder === 'desc' ? SORT_DESC : SORT_ASC,
+        ]);
 
         return new ActiveDataProvider([
             'query' => $query,
             'pagination' => [
                 'pageSize' => self::PAGE_SIZE,
-                'page' => $page - 1, // Преобразование в индекс с 0
+                'page' => $page - 1,
             ],
-            'sort' => [
-                'defaultOrder' => [$sortBy => ($sortOrder === 'desc' ? SORT_DESC : SORT_ASC)],
-                'attributes' => [
-                    'salary',
-                    'created_at',
-                ],
-            ],
+            'sort' => false,
         ]);
     }
 
@@ -115,7 +112,7 @@ class VacancyRepository implements VacancyRepositoryInterface
      */
     public function save(Vacancy $vacancy): bool
     {
-        return $vacancy->save();
+        return $vacancy->save(false);
     }
 
     /**
@@ -205,38 +202,30 @@ class VacancyRepository implements VacancyRepositoryInterface
         $vacancyQuery = Vacancy::find();
 
         if ($driver === 'pgsql') {
-            // PostgreSQL - используем tsvector и ts_rank для ранжирования
-            $searchQuery = str_replace(' ', ' & ', $query); // Преобразуем в формат tsquery
-
-            // Добавляем условие поиска
+            // plainto_tsquery безопасно обрабатывает произвольный ввод пользователя
             $vacancyQuery->andWhere(
-                'search_vector @@ to_tsquery(:query)',
-                [':query' => $searchQuery]
-            );
-
-            // Добавляем ранжирование по релевантности
-            if ($sortOrder === 'relevance') {
-                $vacancyQuery->addSelect([
-                    '*',
-                    'ts_rank(search_vector, to_tsquery(:query)) as rank'
-                ])->orderBy(['rank' => SORT_DESC]);
-            }
-
-        } elseif ($driver === 'mysql') {
-            // MySQL - используем MATCH AGAINST
-            $vacancyQuery->andWhere(
-                'MATCH(title, description) AGAINST (:query IN NATURAL LANGUAGE MODE)',
+                'search_vector @@ plainto_tsquery(:query)',
                 [':query' => $query]
             );
 
-            // Добавляем ранжирование по релевантности
             if ($sortOrder === 'relevance') {
-                $vacancyQuery->addSelect([
-                    '*',
-                    'MATCH(title, description) AGAINST (:query IN NATURAL LANGUAGE MODE) as relevance_score'
-                ])->orderBy(['relevance_score' => SORT_DESC]);
+                $vacancyQuery->addSelect('*')
+                    ->addSelect(['rank' => 'ts_rank(search_vector, plainto_tsquery(:rankQuery))'])
+                    ->addParams([':rankQuery' => $query])
+                    ->orderBy(['rank' => SORT_DESC]);
             }
+        } elseif ($driver === 'mysql') {
+            $vacancyQuery->andWhere(
+                'MATCH(title, description) AGAINST (:searchQuery IN NATURAL LANGUAGE MODE)',
+                [':searchQuery' => $query]
+            );
 
+            if ($sortOrder === 'relevance') {
+                $vacancyQuery->orderBy(new Expression(
+                    'MATCH(title, description) AGAINST (:relevanceQuery IN NATURAL LANGUAGE MODE) DESC',
+                    [':relevanceQuery' => $query]
+                ));
+            }
         } else {
             // Fallback для других СУБД - используем LIKE
             // Менее эффективно, но работает везде

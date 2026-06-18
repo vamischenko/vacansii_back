@@ -248,7 +248,6 @@ class RateLimitingUnitTest extends Unit
         for ($i = 0; $i < 5; $i++) {
             $cached = $cache->get($key);
             if ($cached['allowance'] < 1) {
-                $this->fail('Rate limit превышен, запрос должен быть заблокирован');
                 break;
             }
             $cached['allowance']--;

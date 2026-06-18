@@ -95,14 +95,47 @@ class Vacancy extends ActiveRecord
     }
 
     /**
+     * Декодирует JSON-поле additional_fields после загрузки из БД.
+     */
+    public function afterFind()
+    {
+        parent::afterFind();
+        if (is_string($this->additional_fields) && $this->additional_fields !== '') {
+            $decoded = json_decode($this->additional_fields, true);
+            $this->additional_fields = is_array($decoded) ? $decoded : null;
+        }
+    }
+
+    /**
+     * Кодирует additional_fields перед сохранением (для СУБД без нативного JSON-типа).
+     */
+    public function beforeSave($insert)
+    {
+        if (!parent::beforeSave($insert)) {
+            return false;
+        }
+
+        if (is_array($this->additional_fields)) {
+            $column = static::getTableSchema()->columns['additional_fields'] ?? null;
+            if ($column === null || stripos((string) $column->dbType, 'json') === false) {
+                $encoded = json_encode($this->additional_fields, JSON_UNESCAPED_UNICODE);
+                if ($encoded !== false) {
+                    $this->setAttribute('additional_fields', $encoded);
+                }
+            }
+        }
+
+        return true;
+    }
+
+    /**
      * Кастомный валидатор для дополнительных полей.
      *
      * Проверяет, что additional_fields является массивом (если указано)
      * и не превышает максимальный размер при сериализации в JSON.
      *
      * @param string $attribute Имя атрибута для валидации
-     * @param array $params Дополнительные параметры валидации
-     * @return void
+     * @param array|null $params Дополнительные параметры валидации
      */
     public function validateAdditionalFields($attribute, $params)
     {

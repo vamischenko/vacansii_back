@@ -6,6 +6,7 @@ use Yii;
 use yii\rest\Controller;
 use yii\web\Response;
 use app\services\VacancyService;
+use app\components\IpRateLimiter;
 
 /**
  * Контроллер для работы с вакансиями через REST API
@@ -80,53 +81,14 @@ class VacancyController extends Controller
             ],
         ];
 
-        // Настройка Rate Limiting
-        // Ограничивает количество запросов от одного IP-адреса
-        // Лимиты загружаются из .env или используют значения по умолчанию
+        $rateLimit = (int) (getenv('RATE_LIMIT_REQUESTS') ?: 100);
+        $rateLimitWindow = (int) (getenv('RATE_LIMIT_WINDOW') ?: 3600);
+        $ip = Yii::$app->request->userIP ?? '127.0.0.1';
+
         $behaviors['rateLimiter'] = [
             'class' => \yii\filters\RateLimiter::class,
             'enableRateLimitHeaders' => true,
-            'user' => false, // Используем IP вместо авторизованного пользователя
-            'request' => function ($action) {
-                // Получаем IP-адрес клиента
-                $ip = Yii::$app->request->userIP;
-
-                // Загружаем лимиты из .env
-                $rateLimit = (int) (getenv('RATE_LIMIT_REQUESTS') ?: 100);
-                $rateLimitWindow = (int) (getenv('RATE_LIMIT_WINDOW') ?: 3600);
-
-                // Используем cache для хранения счетчиков
-                $cache = Yii::$app->cache;
-                $key = ['rate-limit', $ip, $action->controller->id, $action->id];
-
-                $data = $cache->get($key);
-                if ($data === false) {
-                    // Первый запрос в окне
-                    $data = [
-                        'allowance' => $rateLimit - 1,
-                        'allowance_updated_at' => time(),
-                    ];
-                    $cache->set($key, $data, $rateLimitWindow);
-                    return [$rateLimit, $rateLimitWindow];
-                }
-
-                $timePassed = time() - $data['allowance_updated_at'];
-                $allowanceToAdd = $timePassed * ($rateLimit / $rateLimitWindow);
-                $data['allowance'] = min($rateLimit, $data['allowance'] + $allowanceToAdd);
-                $data['allowance_updated_at'] = time();
-
-                if ($data['allowance'] < 1) {
-                    // Лимит превышен
-                    Yii::warning("Rate limit exceeded for IP: {$ip}", __METHOD__);
-                    $cache->set($key, $data, $rateLimitWindow);
-                    throw new \yii\web\TooManyRequestsHttpException('Превышен лимит запросов. Попробуйте позже.');
-                }
-
-                $data['allowance']--;
-                $cache->set($key, $data, $rateLimitWindow);
-
-                return [$rateLimit, $rateLimitWindow];
-            },
+            'user' => new IpRateLimiter($ip, $this->id, $rateLimit, $rateLimitWindow),
         ];
 
         return $behaviors;
@@ -297,10 +259,7 @@ class VacancyController extends Controller
      */
     public function actionCreate()
     {
-        $request = Yii::$app->request;
-        $data = $request->post();
-
-        return $this->vacancyService->createVacancy($data);
+        return $this->vacancyService->createVacancy($this->getRequestData());
     }
 
     /**
@@ -346,10 +305,7 @@ class VacancyController extends Controller
      */
     public function actionUpdate($id)
     {
-        $request = Yii::$app->request;
-        $data = $request->post();
-
-        return $this->vacancyService->updateVacancy((int) $id, $data);
+        return $this->vacancyService->updateVacancy((int) $id, $this->getRequestData());
     }
 
     /**
@@ -455,5 +411,13 @@ class VacancyController extends Controller
         $sortOrder = $request->get('sort', 'relevance');
 
         return $this->vacancyService->searchVacancies($searchQuery, $page, $sortOrder);
+    }
+
+    /**
+     * Возвращает данные из тела запроса (JSON, form-data).
+     */
+    private function getRequestData(): array
+    {
+        return Yii::$app->request->getBodyParams();
     }
 }

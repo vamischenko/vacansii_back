@@ -5,6 +5,7 @@ namespace app\services;
 use app\models\Vacancy;
 use app\repositories\VacancyRepositoryInterface;
 use Yii;
+use yii\data\ActiveDataProvider;
 
 /**
  * Сервис для работы с вакансиями.
@@ -37,6 +38,12 @@ class VacancyService
      * Разрешенные поля для фильтрации при получении вакансии
      */
     private const ALLOWED_FILTER_FIELDS = ['title', 'description', 'salary', 'additional_fields'];
+
+    /**
+     * Ключ версии кеша списков — при инвалидации инкрементируется,
+     * что делает все старые ключи списков недостижимыми без перебора.
+     */
+    private const CACHE_VERSION_KEY = 'vacancy_list_version';
 
     /**
      * Время жизни кеша для списка вакансий (в секундах)
@@ -96,18 +103,19 @@ class VacancyService
     public function getVacancyList(int $page, string $sortBy, string $sortOrder): array
     {
         // Валидация параметров сортировки
-        if (!in_array($sortBy, self::ALLOWED_SORT_FIELDS)) {
+        if (!in_array($sortBy, self::ALLOWED_SORT_FIELDS, true)) {
             Yii::warning("Invalid sort field requested: {$sortBy}. Using default 'created_at'", __METHOD__);
             $sortBy = 'created_at';
         }
 
-        if (!in_array($sortOrder, self::ALLOWED_SORT_ORDERS)) {
+        if (!in_array($sortOrder, self::ALLOWED_SORT_ORDERS, true)) {
             Yii::warning("Invalid sort order requested: {$sortOrder}. Using default 'desc'", __METHOD__);
             $sortOrder = 'desc';
         }
 
         // Проверка кеша
-        $cacheKey = "vacancy_list_{$page}_{$sortBy}_{$sortOrder}";
+        $version = $this->getListCacheVersion();
+        $cacheKey = "vacancy_list_v{$version}_{$page}_{$sortBy}_{$sortOrder}";
         $cache = Yii::$app->cache;
 
         $result = $cache->get($cacheKey);
@@ -123,22 +131,14 @@ class VacancyService
 
             $vacancies = [];
             foreach ($dataProvider->getModels() as $vacancy) {
-                $vacancies[] = [
-                    'id' => $vacancy->id,
-                    'title' => $vacancy->title,
-                    'salary' => $vacancy->salary,
-                    'description' => $vacancy->description,
-                ];
+                $vacancies[] = $this->formatVacancyListItem($vacancy);
             }
+
+            $total = $dataProvider->getTotalCount();
 
             $result = [
                 'data' => $vacancies,
-                'pagination' => [
-                    'total' => $dataProvider->getTotalCount(),
-                    'page' => $page,
-                    'pageSize' => self::PAGE_SIZE,
-                    'pageCount' => $dataProvider->pagination->pageCount,
-                ],
+                'pagination' => $this->buildPaginationMeta($page, $total, $dataProvider),
             ];
 
             // Сохранение в кеш
@@ -211,7 +211,7 @@ class VacancyService
                 $filteredResult = ['id' => $vacancy->id];
                 foreach ($fields as $field) {
                     $field = trim($field);
-                    if (in_array($field, self::ALLOWED_FILTER_FIELDS) && isset($result[$field])) {
+                    if (in_array($field, self::ALLOWED_FILTER_FIELDS, true) && isset($result[$field])) {
                         $filteredResult[$field] = $result[$field];
                     } elseif ($field === 'additional_fields' && $vacancy->additional_fields) {
                         $filteredResult['additional_fields'] = $vacancy->additional_fields;
@@ -492,40 +492,51 @@ class VacancyService
     }
 
     /**
-     * Инвалидация кеша списков вакансий
-     *
-     * Полностью очищает кеш для всех вариантов списков вакансий
-     * (все страницы, все сортировки). Используется при создании,
-     * обновлении или удалении вакансий.
-     *
-     * @return void
+     * Инвалидация кеша списков вакансий.
+     * Инкрементирует версию — все старые ключи списков становятся недостижимыми.
      */
     private function invalidateListCache(): void
     {
-        // Простое решение: очищаем весь кеш с префиксом vacancy_list_
-        // Для более точной инвалидации можно хранить список ключей
         $cache = Yii::$app->cache;
+        $version = (int) ($cache->get(self::CACHE_VERSION_KEY) ?: 0);
+        $cache->set(self::CACHE_VERSION_KEY, $version + 1);
+        Yii::info("Vacancy list cache invalidated (version now " . ($version + 1) . ")", __METHOD__);
+    }
 
-        // В Yii2 FileCache нет встроенного метода для удаления по паттерну,
-        // поэтому используем flush() для простоты (или можно вручную перебирать ключи)
-        // Альтернатива: сохранять ключи в отдельном массиве и удалять их
+    private function getListCacheVersion(): int
+    {
+        return (int) (Yii::$app->cache->get(self::CACHE_VERSION_KEY) ?: 0);
+    }
 
-        // Для production лучше использовать tagged cache или хранить список ключей
-        // Здесь упрощенный вариант - удаляем популярные комбинации
-        $sortFields = self::ALLOWED_SORT_FIELDS;
-        $sortOrders = self::ALLOWED_SORT_ORDERS;
+    /**
+     * Форматирует вакансию для ответа списка/поиска.
+     */
+    private function formatVacancyListItem(Vacancy $vacancy): array
+    {
+        return [
+            'id' => $vacancy->id,
+            'title' => $vacancy->title,
+            'salary' => $vacancy->salary,
+            'description' => $vacancy->description,
+        ];
+    }
 
-        // Очищаем первые 10 страниц для всех комбинаций сортировок
-        for ($page = 1; $page <= 10; $page++) {
-            foreach ($sortFields as $field) {
-                foreach ($sortOrders as $order) {
-                    $cacheKey = "vacancy_list_{$page}_{$field}_{$order}";
-                    $cache->delete($cacheKey);
-                }
-            }
-        }
+    /**
+     * Собирает метаданные пагинации для ответа API.
+     */
+    private function buildPaginationMeta(int $page, int $total, ActiveDataProvider $dataProvider): array
+    {
+        $pagination = $dataProvider->pagination;
+        $pageCount = $pagination !== null
+            ? $pagination->pageCount
+            : ($total > 0 ? (int) ceil($total / self::PAGE_SIZE) : 0);
 
-        Yii::info("Cache invalidated for vacancy lists", __METHOD__);
+        return [
+            'total' => $total,
+            'page' => $page,
+            'pageSize' => self::PAGE_SIZE,
+            'pageCount' => $pageCount,
+        ];
     }
 
     /**
@@ -584,13 +595,14 @@ class VacancyService
 
         // Валидация параметра сортировки
         $allowedSortOrders = ['relevance', 'asc', 'desc'];
-        if (!in_array($sortOrder, $allowedSortOrders)) {
+        if (!in_array($sortOrder, $allowedSortOrders, true)) {
             Yii::warning("Invalid sort order: {$sortOrder}. Using default 'relevance'", __METHOD__);
             $sortOrder = 'relevance';
         }
 
         // Проверка кеша
-        $cacheKey = "vacancy_search_" . md5($searchQuery) . "_{$page}_{$sortOrder}";
+        $version = $this->getListCacheVersion();
+        $cacheKey = "vacancy_search_v{$version}_" . md5($searchQuery) . "_{$page}_{$sortOrder}";
         $cache = Yii::$app->cache;
 
         $result = $cache->get($cacheKey);
@@ -607,22 +619,14 @@ class VacancyService
 
             $vacancies = [];
             foreach ($dataProvider->getModels() as $vacancy) {
-                $vacancies[] = [
-                    'id' => $vacancy->id,
-                    'title' => $vacancy->title,
-                    'salary' => $vacancy->salary,
-                    'description' => $vacancy->description,
-                ];
+                $vacancies[] = $this->formatVacancyListItem($vacancy);
             }
+
+            $total = $dataProvider->getTotalCount();
 
             $result = [
                 'data' => $vacancies,
-                'pagination' => [
-                    'total' => $dataProvider->getTotalCount(),
-                    'page' => $page,
-                    'pageSize' => self::PAGE_SIZE,
-                    'pageCount' => $dataProvider->pagination->pageCount,
-                ],
+                'pagination' => $this->buildPaginationMeta($page, $total, $dataProvider),
                 'query' => $searchQuery,
             ];
 

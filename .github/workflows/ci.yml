@@ -95,7 +95,7 @@ jobs:
         with:
           php-version: ${{ env.PHP_VERSION }}
           extensions: mbstring, intl
-          tools: composer:v${{ env.COMPOSER_VERSION }}, phpcs, phpstan
+          tools: composer:v${{ env.COMPOSER_VERSION }}
 
       - name: Install dependencies
         run: composer install --prefer-dist --no-progress --no-interaction
@@ -103,14 +103,11 @@ jobs:
       - name: Check PHP syntax
         run: find . -name "*.php" -not -path "./vendor/*" -print0 | xargs -0 -n1 php -l
 
-      - name: Run PHP_CodeSniffer (if configured)
-        run: |
-          if [ -f "phpcs.xml" ]; then
-            vendor/bin/phpcs || true
-          else
-            echo "phpcs.xml not found, skipping"
-          fi
-        continue-on-error: true
+      - name: Run PHP_CodeSniffer
+        run: vendor/bin/phpcs
+
+      - name: Run PHPStan
+        run: vendor/bin/phpstan analyse --memory-limit=1G
 
   security:
     name: Security Check
@@ -142,18 +139,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
-
       - name: Build Docker image
-        uses: docker/build-push-action@v4
-        with:
-          context: .
-          file: ./docker/php/Dockerfile
-          push: false
-          tags: vacancy-api:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+        run: docker compose build
 
   deploy:
     name: Deploy to Production
