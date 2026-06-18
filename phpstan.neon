@@ -1,0 +1,17 @@
+parameters:
+    level: 5
+    paths:
+        - components
+        - controllers
+        - models
+        - repositories
+        - services
+        - widgets
+        - assets
+    excludePaths:
+        - tests/_output/*
+        - runtime/*
+        - vendor/*
+    bootstrapFiles:
+        - phpstan-bootstrap.php
+    treatPhpDocTypesAsCertain: false
