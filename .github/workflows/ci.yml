@@ -142,38 +142,36 @@ jobs:
       - name: Build Docker image
         run: docker compose build
 
-  deploy:
-    name: Deploy to Production
-    runs-on: ubuntu-latest
-    needs: [build-docker]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    environment: production
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Deploy to server
-        uses: appleboy/ssh-action@master
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          script: |
-            cd /var/www/vacancy-api
-            git pull origin main
-            docker-compose pull
-            docker-compose up -d --force-recreate
-            docker-compose exec -T php php yii migrate --interactive=0
-
-      - name: Notify deployment
-        if: success()
-        run: |
-          echo "Deployment successful!"
-          # Здесь можно добавить отправку уведомлений в Slack, Discord и т.д.
-
-      - name: Notify failure
-        if: failure()
-        run: |
-          echo "Deployment failed!"
-          # Здесь можно добавить отправку уведомлений об ошибке
+  # deploy:
+  #   name: Deploy to Production
+  #   runs-on: ubuntu-latest
+  #   needs: [build-docker]
+  #   if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+  #   environment: production
+  #
+  #   steps:
+  #     - name: Checkout code
+  #       uses: actions/checkout@v3
+  #
+  #     - name: Deploy to server
+  #       uses: appleboy/ssh-action@master
+  #       with:
+  #         host: ${{ secrets.DEPLOY_HOST }}
+  #         username: ${{ secrets.DEPLOY_USER }}
+  #         key: ${{ secrets.DEPLOY_SSH_KEY }}
+  #         script: |
+  #           cd /var/www/vacancy-api
+  #           git pull origin main
+  #           docker-compose pull
+  #           docker-compose up -d --force-recreate
+  #           docker-compose exec -T php php yii migrate --interactive=0
+  #
+  #     - name: Notify deployment
+  #       if: success()
+  #       run: |
+  #         echo "Deployment successful!"
+  #
+  #     - name: Notify failure
+  #       if: failure()
+  #       run: |
+  #         echo "Deployment failed!"
